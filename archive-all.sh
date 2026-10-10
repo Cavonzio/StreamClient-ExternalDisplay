@@ -11,6 +11,8 @@
 #
 # Archives and exports run one at a time (each xcodebuild already uses every
 # core, and exports talk to Apple for signing); uploads run in parallel.
+# The display is kept awake for the whole run so the screen doesn't lock before
+# the tag push (which needs the SSH key).
 #
 # Requirements:
 #   App Store Connect API key (.p8 file)
@@ -100,6 +102,13 @@ EXPORT_RETRY_MAX_ATTEMPTS="${EXPORT_RETRY_MAX_ATTEMPTS:-4}"
 EXPORT_RETRY_BASE_DELAY_SECONDS="${EXPORT_RETRY_BASE_DELAY_SECONDS:-15}"
 
 rm -rf "$EXPORT_DIR"
+
+# --- Keep the screen from locking ---
+# The final tag push needs the Secretive SSH key, which is unavailable once the
+# screen locks. Holding the display awake keeps the idle lock (screen saver /
+# display sleep) from kicking in; caffeinate exits with this script.
+
+caffeinate -di -w $$ &
 
 # --- Determine build number from git commit count ---
 
