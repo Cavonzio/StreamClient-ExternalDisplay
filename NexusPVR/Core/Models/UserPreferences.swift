@@ -42,6 +42,9 @@ nonisolated struct UserPreferences: Codable {
     /// preserves the pre-feature visual output exactly — existing
     /// users see zero change on first launch after upgrade.
     var uiFontSize: UIFontSize = .medium
+    /// Columns in the tvOS Channels grid (#177); nil = Auto, the adaptive
+    /// grid. Read it through `ChannelGridLayout.columns(_:)`.
+    var channelsPerRow: Int? = nil
     var preferredSubtitleLanguage: String? = nil
     var guideShowGroupsInSidebar: Bool = false
     var guideGroupIds: [Int] = []
@@ -206,6 +209,7 @@ nonisolated struct UserPreferences: Codable {
         case cellularStreamQuality
         case outputProfileId
         case uiFontSize
+        case channelsPerRow
         case preferredSubtitleLanguage
         case guideShowGroupsInSidebar
         case guideGroupIds
@@ -251,6 +255,7 @@ nonisolated struct UserPreferences: Codable {
         // (any prefs written before #107) decodes to .medium so
         // existing users see no visual change.
         uiFontSize = try container.decodeIfPresent(UIFontSize.self, forKey: .uiFontSize) ?? .medium
+        channelsPerRow = try container.decodeIfPresent(Int.self, forKey: .channelsPerRow)
         preferredSubtitleLanguage = try container.decodeIfPresent(String.self, forKey: .preferredSubtitleLanguage)
         guideShowGroupsInSidebar = try container.decodeIfPresent(Bool.self, forKey: .guideShowGroupsInSidebar) ?? false
         guideGroupIds = try container.decodeIfPresent([Int].self, forKey: .guideGroupIds) ?? []
@@ -279,6 +284,7 @@ nonisolated struct UserPreferences: Codable {
         try container.encodeIfPresent(cellularStreamQuality, forKey: .cellularStreamQuality)
         try container.encodeIfPresent(outputProfileId, forKey: .outputProfileId)
         try container.encode(uiFontSize, forKey: .uiFontSize)
+        try container.encodeIfPresent(channelsPerRow, forKey: .channelsPerRow)
         try container.encodeIfPresent(preferredSubtitleLanguage, forKey: .preferredSubtitleLanguage)
         try container.encode(guideShowGroupsInSidebar, forKey: .guideShowGroupsInSidebar)
         try container.encode(guideGroupIds, forKey: .guideGroupIds)
