@@ -2,7 +2,7 @@
 
 **StreamClient**
 
-*Last updated: March 23, 2026*
+*Last updated: October 12, 2026*
 
 ## Overview
 
@@ -22,9 +22,15 @@ StreamClient does **not** collect, store, or transmit any personal data. The app
 
 StreamClient communicates exclusively with the PVR/DVR server you configure (NextPVR or Dispatcharr). All network traffic stays between your device and your server on your local network or via the address you provide. No data is sent to the developer or any third-party service.
 
+## Location Permission and Wi-Fi Name
+
+On iPhone, iPad and Mac, you can choose to use a second server address depending on the Wi-Fi network your device is connected to. Apple requires Location permission before an app can read the name of the current Wi-Fi network, so StreamClient asks for it when you turn this option on in Settings — never at launch, and never on Apple TV.
+
+The permission is used only to read the Wi-Fi network name. StreamClient does not read, store, or transmit your location. The network name you choose is stored on that device only: it is not synced to iCloud and is not sent to the developer or to your server. You can decline or revoke the permission at any time in the system settings; the app keeps working with your primary server address.
+
 ## iCloud Sync
 
-StreamClient uses Apple's iCloud Key-Value Store to sync your preferences (server address, topic keywords, and playback settings) across your own Apple devices. This data is managed entirely by Apple under your iCloud account and is not accessible to the developer.
+StreamClient uses Apple's iCloud Key-Value Store to sync your preferences (server address, topic keywords, and playback settings) and your playback positions across your own Apple devices. This data is managed entirely by Apple under your iCloud account and is not accessible to the developer.
 
 ## Local Storage
 
