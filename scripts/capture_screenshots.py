@@ -9,7 +9,8 @@ Usage:
     python3 scripts/capture_screenshots.py --shots guide,channels --appearance dark
 
     --schemes     comma-separated: NextPVR, Dispatcharr          (default: both)
-    --platforms   comma-separated: iPhone, iPad, tvOS, macOS     (default: all)
+    --platforms   comma-separated: iPhone, iPhone-6.5, iPhone-6.3, iPad, tvOS,
+                  macOS                                          (default: all)
     --shots       comma-separated shot names, see SHOTS          (default: all)
     --appearance  light or dark                                  (default: light)
     --output      output directory                               (default: screenshots/)
@@ -20,6 +21,8 @@ Output: <output>/<scheme>/<platform>/<nn>-<shot>.png, at a size App Store
 Connect accepts as is:
 
     iPhone 6.9"   1320 x 2868   (iPhone 17 Pro Max simulator)
+    iPhone 6.5"   1284 x 2778   (iPhone 14 Plus simulator)
+    iPhone 6.3"   1206 x 2622   (iPhone 17 Pro simulator)
     iPad 13"      2064 x 2752   (iPad Pro 13-inch (M5) simulator)
     Apple TV      3840 x 2160   (Apple TV 4K simulator)
     Mac           2880 x 1800   (the app window on a solid background)
@@ -64,7 +67,7 @@ MAC_DERIVED_DATA = DERIVED_DATA / "Screenshots-macOS"
 MAC_BUNDLE_ID_PREFIX = "screenshots"
 
 ALL_SCHEMES = ["NextPVR", "Dispatcharr"]
-ALL_PLATFORMS = ["iPhone", "iPad", "tvOS", "macOS"]
+ALL_PLATFORMS = ["iPhone", "iPhone-6.5", "iPhone-6.3", "iPad", "tvOS", "macOS"]
 
 # (name, demo launch arguments, schemes it exists in)
 # tvOS has no Calendar page: see TVOS_SKIPPED_SHOTS.
@@ -85,6 +88,10 @@ TVOS_SKIPPED_SHOTS = {"calendar"}
 SIMULATORS = {
     "iPhone": ("Screenshots iPhone 6.9", "iPhone-17-Pro-Max", "iOS",
                {(1320, 2868), (1290, 2796), (1260, 2736)}),
+    "iPhone-6.5": ("Screenshots iPhone 6.5", "iPhone-14-Plus", "iOS",
+                   {(1284, 2778), (1242, 2688)}),
+    "iPhone-6.3": ("Screenshots iPhone 6.3", "iPhone-17-Pro", "iOS",
+                   {(1206, 2622), (1179, 2556)}),
     "iPad": ("Screenshots iPad 13", "iPad-Pro-13-inch-M5-12GB", "iOS",
              {(2064, 2752), (2048, 2732)}),
     "tvOS": ("Screenshots Apple TV 4K", "Apple-TV-4K-3rd-generation-4K", "tvOS",
@@ -164,12 +171,19 @@ def build(scheme: str, platform: str, simulator_id: str | None, skip_build: bool
 
 # --- Simulators ------------------------------------------------------------
 
-def latest_runtime(runtime_platform: str) -> str:
+def create_simulator(name: str, device_type: str, runtime_platform: str) -> str:
+    """Creates the simulator on the newest installed runtime that has the device."""
     runtimes = json.loads(simctl("list", "runtimes", "-j"))["runtimes"]
     available = [r for r in runtimes if r["isAvailable"] and r["platform"] == runtime_platform]
-    if not available:
-        raise SystemExit(f"ERROR: no {runtime_platform} simulator runtime installed.")
-    return max(available, key=lambda r: [int(n) for n in r["version"].split(".")])["identifier"]
+    available.sort(key=lambda r: [int(n) for n in r["version"].split(".")], reverse=True)
+    for runtime in available:
+        result = subprocess.run(["xcrun", "simctl", "create", name,
+                                 f"com.apple.CoreSimulator.SimDeviceType.{device_type}", runtime["identifier"]],
+                                capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"  Created simulator {name} ({runtime['name']})")
+            return result.stdout.strip()
+    raise SystemExit(f"ERROR: no installed {runtime_platform} simulator runtime supports {device_type}.")
 
 
 def prepare_simulator(platform: str, appearance: str) -> str:
@@ -179,9 +193,7 @@ def prepare_simulator(platform: str, appearance: str) -> str:
     udid = next((d["udid"] for runtime in devices.values() for d in runtime
                  if d["name"] == name and d["isAvailable"]), None)
     if udid is None:
-        udid = simctl("create", name, f"com.apple.CoreSimulator.SimDeviceType.{device_type}",
-                      latest_runtime(runtime_platform)).strip()
-        print(f"  Created simulator {name}")
+        udid = create_simulator(name, device_type, runtime_platform)
     simctl("bootstatus", udid, "-b")
 
     # English system UI (the iPad status bar shows the date), whatever the
