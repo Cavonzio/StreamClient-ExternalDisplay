@@ -690,6 +690,11 @@ struct CalendarTabView: View {
                 viewModel.client = client
                 await viewModel.loadData()
             }
+            // Opened before the EPG finished loading: `loadData` gave up.
+            .onChange(of: epgCache.hasLoaded) { _ in
+                guard epgCache.hasLoaded else { return }
+                Task { await viewModel.loadData() }
+            }
     }
 }
 #endif
