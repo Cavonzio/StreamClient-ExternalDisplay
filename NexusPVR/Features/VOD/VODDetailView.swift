@@ -239,6 +239,7 @@ struct VODDetailView: View {
             Text(remaining)
                 .midnightMeta(labelSize + 2)
                 .foregroundStyle(MidnightPalette.inkSoft)
+                .fixedSize()
         }
     }
 
@@ -258,6 +259,9 @@ struct VODDetailView: View {
                 Text("Stream")
                     .midnightKicker(labelSize)
                     .foregroundStyle(MidnightPalette.inkSoft)
+                    // Never squeezed into a letter-per-line column: when the
+                    // row is too narrow, `actions` moves the picker under Play.
+                    .fixedSize()
                 MidnightPicker(title: "Stream", selection: $viewModel.selectedStreamId, options: streamOptions)
                     .accessibilityIdentifier("vod-stream-picker")
             }
