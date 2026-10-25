@@ -862,6 +862,8 @@
 				"INFOPLIST_KEY_NSLocalNetworkUsageDescription[sdk=iphoneos*]" = "NexusPVR needs to connect to your local NextPVR server for streaming TV and managing recordings.";
 				"INFOPLIST_KEY_NSLocalNetworkUsageDescription[sdk=iphonesimulator*]" = "NexusPVR needs to connect to your local NextPVR server for streaming TV and managing recordings.";
 				"INFOPLIST_KEY_NSLocalNetworkUsageDescription[sdk=macosx*]" = "NexusPVR needs to connect to your local NextPVR server for streaming TV and managing recordings.";
+				INFOPLIST_KEY_NSLocationUsageDescription = "StreamClient uses Location permission to read your Wi-Fi name and choose the primary or custom server address. Your location is not collected.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "StreamClient uses Location permission to read your Wi-Fi name and choose the primary or custom server address. Your location is not collected.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -876,7 +878,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.6;
+				MARKETING_VERSION = 1.7;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_ID_PREFIX).NexusPVR";
 				PRODUCT_MODULE_NAME = NextPVR;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -944,6 +946,8 @@
 				"INFOPLIST_KEY_NSLocalNetworkUsageDescription[sdk=iphoneos*]" = "NexusPVR needs to connect to your local NextPVR server for streaming TV and managing recordings.";
 				"INFOPLIST_KEY_NSLocalNetworkUsageDescription[sdk=iphonesimulator*]" = "NexusPVR needs to connect to your local NextPVR server for streaming TV and managing recordings.";
 				"INFOPLIST_KEY_NSLocalNetworkUsageDescription[sdk=macosx*]" = "NexusPVR needs to connect to your local NextPVR server for streaming TV and managing recordings.";
+				INFOPLIST_KEY_NSLocationUsageDescription = "StreamClient uses Location permission to read your Wi-Fi name and choose the primary or custom server address. Your location is not collected.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "StreamClient uses Location permission to read your Wi-Fi name and choose the primary or custom server address. Your location is not collected.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -958,7 +962,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.6;
+				MARKETING_VERSION = 1.7;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_ID_PREFIX).NexusPVR";
 				PRODUCT_MODULE_NAME = NextPVR;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1111,7 +1115,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.6;
+				MARKETING_VERSION = 1.7;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_ID_PREFIX).NexusPVR.TopShelfExtension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = appletvos;
@@ -1147,7 +1151,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.6;
+				MARKETING_VERSION = 1.7;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_ID_PREFIX).NexusPVR.TopShelfExtension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = appletvos;
@@ -1184,7 +1188,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.6;
+				MARKETING_VERSION = 1.7;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_ID_PREFIX).DispatcherPVR.TopShelfExtension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = appletvos;
@@ -1220,7 +1224,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.6;
+				MARKETING_VERSION = 1.7;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_ID_PREFIX).DispatcherPVR.TopShelfExtension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = appletvos;
@@ -1297,7 +1301,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.6;
+				MARKETING_VERSION = 1.7;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_ID_PREFIX).DispatcherPVR";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				"PRODUCT_NAME[sdk=macosx*]" = StreamClient;
@@ -1378,7 +1382,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.6;
+				MARKETING_VERSION = 1.7;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_ID_PREFIX).DispatcherPVR";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				"PRODUCT_NAME[sdk=macosx*]" = StreamClient;
