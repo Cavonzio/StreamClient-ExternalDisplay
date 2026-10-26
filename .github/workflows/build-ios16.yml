@@ -1,11 +1,15 @@
-name: Build IPA (NextPVR, iOS 16 + schermo esterno)
+name: Build IPA (NextPVR, iOS 16 + external display)
 
 on:
   workflow_dispatch:
     inputs:
       bundle_prefix:
-        description: "Prefisso del bundle ID (qualsiasi, es. com.tuonome.streamclient)"
-        default: "com.example.streamclient"
+        description: "Bundle ID prefix (any value, e.g. com.yourname.streamclient)"
+        default: "com.NextPVR.streamclient"
+      external_display:
+        description: "Enable the external display (adds a scene to Info.plist)"
+        type: boolean
+        default: true
 
 jobs:
   build:
@@ -14,21 +18,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Applica la patch iOS 16 + schermo esterno
+      - name: Apply the iOS 16 + external display patch
         run: git apply --whitespace=nowarn ios16-external-display.patch
 
-      - name: Versione di Xcode
+      - name: Xcode version
         run: |
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
 
-      - name: Configurazione locale (Secret.xcconfig)
+      - name: Local configuration (Secret.xcconfig)
         env:
           PREFIX: ${{ inputs.bundle_prefix }}
         run: |
           printf 'BUNDLE_ID_PREFIX = %s\nDEVELOPMENT_TEAM =\n' "$PREFIX" > Configs/Secret.xcconfig
 
-      - name: Compila
+      - name: Build
         run: |
           set -o pipefail
           xcodebuild -project NexusPVR.xcodeproj -scheme NextPVR \
@@ -39,7 +43,8 @@ jobs:
             -skipPackagePluginValidation -skipMacroValidation \
             -derivedDataPath build build 2>&1 | tee build.log
 
-      - name: Dichiara la scena per lo schermo esterno
+      - name: Declare the external display scene
+        if: ${{ inputs.external_display }}
         run: |
           APP=$(ls -d build/Build/Products/Release-iphoneos/*.app | head -1)
           PLIST="$APP/Info.plist"
@@ -58,7 +63,93 @@ jobs:
           plutil -p "$PLIST" | grep -A14 UIApplicationSceneManifest || true
           plutil -p "$PLIST" | grep -E "MinimumOSVersion|CFBundleIdentifier"
 
-      - name: Crea l'IPA
+      # Why this step exists:
+      # The build is unsigned, so the main executable has no entitlements at all.
+      # When TrollStore installs an app like that, it signs the main executable with
+      # fallback entitlements that include get-task-allow = true, and on iOS 16+ that
+      # makes the app require Developer Mode. If the main executable already has
+      # entitlements, TrollStore keeps them and adds nothing, so we give it explicit
+      # ones with get-task-allow = false.
+      # This step runs after the Info.plist changes because the signature covers it.
+      - name: Fake-sign with explicit entitlements (no Developer Mode needed)
+        run: |
+          # ldid: Homebrew first, then the Procursus release binary as a fallback
+          LDID=$(command -v ldid || true)
+          if [ -z "$LDID" ]; then
+            if brew install ldid; then
+              LDID=$(command -v ldid)
+            else
+              ARCH=$(uname -m)
+              [ "$ARCH" = "arm64" ] || ARCH=x86_64
+              curl -fsSL -o "$RUNNER_TEMP/ldid" \
+                "https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_macosx_$ARCH"
+              chmod +x "$RUNNER_TEMP/ldid"
+              LDID="$RUNNER_TEMP/ldid"
+            fi
+          fi
+          echo "Using ldid: $LDID"
+
+          APP=$(ls -d build/Build/Products/Release-iphoneos/*.app | head -1)
+          EXEC=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP/Info.plist")
+          rm -f "$APP/embedded.mobileprovision"
+
+          # get-task-allow is explicitly false; wifi-info is the same entitlement
+          # as in the project's NexusPVR-iOS.entitlements file
+          cat > "$RUNNER_TEMP/main-entitlements.plist" <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>get-task-allow</key>
+            <false/>
+            <key>com.apple.developer.networking.wifi-info</key>
+            <true/>
+          </dict>
+          </plist>
+          EOF
+
+          "$LDID" -S"$RUNNER_TEMP/main-entitlements.plist" "$APP/$EXEC"
+
+          # Check: print the entitlements and fail if any binary has get-task-allow = true
+          BAD=0
+          while IFS= read -r -d '' F; do
+            file -b "$F" | grep -q 'Mach-O' || continue
+            ENT=$("$LDID" -e "$F" 2>/dev/null || true)
+            if [ -n "$ENT" ]; then
+              echo "### ${F#$APP/}"
+              echo "$ENT"
+            fi
+            V=$(echo "$ENT" | plutil -extract get-task-allow raw -o - - 2>/dev/null || true)
+            if [ "$V" = "true" ]; then
+              echo "ERROR: get-task-allow = true in ${F#$APP/}"
+              BAD=1
+            fi
+          done < <(find "$APP" -type f -print0)
+          exit $BAD
+
+      - name: Signing and entitlements diagnostics
+        run: |
+          APP=$(ls -d build/Build/Products/Release-iphoneos/*.app | head -1)
+          {
+            echo "== App"
+            codesign -dvv --entitlements - "$APP" 2>&1 || true
+            for F in "$APP"/Frameworks/*; do
+              echo "== $F"
+              codesign -dvv --entitlements - "$F" 2>&1 || true
+            done
+            echo "== Binaries with get-task-allow = true:"
+            while IFS= read -r -d '' F; do
+              file -b "$F" | grep -q "Mach-O" || continue
+              V=$(codesign -d --entitlements :- "$F" 2>/dev/null | plutil -extract get-task-allow raw -o - - 2>/dev/null || true)
+              if [ "$V" = "true" ]; then
+                echo "$F"
+              fi
+            done < <(find "$APP" -type f -print0)
+            echo "== end"
+          } > signing.txt 2>&1
+          head -120 signing.txt
+
+      - name: Create the IPA
         run: |
           APP=$(ls -d build/Build/Products/Release-iphoneos/*.app | head -1)
           mkdir Payload
@@ -68,7 +159,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: risultato
+          name: result
           path: |
             StreamClient-nextpvr-ios16.ipa
             build.log
+            signing.txt
