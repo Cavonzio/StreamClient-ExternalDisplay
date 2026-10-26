@@ -1287,6 +1287,8 @@
 				"INFOPLIST_KEY_NSLocalNetworkUsageDescription[sdk=iphoneos*]" = "DispatcherPVR needs to connect to your local Dispatcharr server for streaming TV and managing recordings.";
 				"INFOPLIST_KEY_NSLocalNetworkUsageDescription[sdk=iphonesimulator*]" = "DispatcherPVR needs to connect to your local Dispatcharr server for streaming TV and managing recordings.";
 				"INFOPLIST_KEY_NSLocalNetworkUsageDescription[sdk=macosx*]" = "DispatcherPVR needs to connect to your local Dispatcharr server for streaming TV and managing recordings.";
+				INFOPLIST_KEY_NSLocationUsageDescription = "StreamClient uses Location permission to read your Wi-Fi name and choose the primary or custom server address. Your location is not collected.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "StreamClient uses Location permission to read your Wi-Fi name and choose the primary or custom server address. Your location is not collected.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -1368,6 +1370,8 @@
 				"INFOPLIST_KEY_NSLocalNetworkUsageDescription[sdk=iphoneos*]" = "DispatcherPVR needs to connect to your local Dispatcharr server for streaming TV and managing recordings.";
 				"INFOPLIST_KEY_NSLocalNetworkUsageDescription[sdk=iphonesimulator*]" = "DispatcherPVR needs to connect to your local Dispatcharr server for streaming TV and managing recordings.";
 				"INFOPLIST_KEY_NSLocalNetworkUsageDescription[sdk=macosx*]" = "DispatcherPVR needs to connect to your local Dispatcharr server for streaming TV and managing recordings.";
+				INFOPLIST_KEY_NSLocationUsageDescription = "StreamClient uses Location permission to read your Wi-Fi name and choose the primary or custom server address. Your location is not collected.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "StreamClient uses Location permission to read your Wi-Fi name and choose the primary or custom server address. Your location is not collected.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
