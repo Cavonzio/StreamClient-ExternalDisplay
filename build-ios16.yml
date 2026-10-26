@@ -1,0 +1,79 @@
+name: Build IPA (NextPVR, iOS 16 + schermo esterno)
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_prefix:
+        description: "Prefisso del bundle ID (qualsiasi, es. com.tuonome.streamclient)"
+        default: "com.example.streamclient"
+      external_display:
+        description: "Abilita lo schermo esterno (aggiunge una scena all'Info.plist)"
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Applica la patch iOS 16 + schermo esterno
+        run: git apply --whitespace=nowarn ios16-external-display.patch
+
+      - name: Versione di Xcode
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Configurazione locale (Secret.xcconfig)
+        env:
+          PREFIX: ${{ inputs.bundle_prefix }}
+        run: |
+          printf 'BUNDLE_ID_PREFIX = %s\nDEVELOPMENT_TEAM =\n' "$PREFIX" > Configs/Secret.xcconfig
+
+      - name: Compila
+        run: |
+          set -o pipefail
+          xcodebuild -project NexusPVR.xcodeproj -scheme NextPVR \
+            -sdk iphoneos -configuration Release \
+            -destination 'generic/platform=iOS' \
+            IPHONEOS_DEPLOYMENT_TARGET=16.0 \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            -skipPackagePluginValidation -skipMacroValidation \
+            -derivedDataPath build build 2>&1 | tee build.log
+
+      - name: Dichiara la scena per lo schermo esterno
+        if: ${{ inputs.external_display }}
+        run: |
+          APP=$(ls -d build/Build/Products/Release-iphoneos/*.app | head -1)
+          PLIST="$APP/Info.plist"
+          PB=/usr/libexec/PlistBuddy
+          $PB -c "Delete :UIApplicationSceneManifest" "$PLIST" || true
+          $PB -c "Add :UIApplicationSceneManifest dict" "$PLIST"
+          $PB -c "Add :UIApplicationSceneManifest:UIApplicationSupportsMultipleScenes bool true" "$PLIST"
+          $PB -c "Add :UIApplicationSceneManifest:UISceneConfigurations dict" "$PLIST"
+          for ROLE in UIWindowSceneSessionRoleExternalDisplayNonInteractive UIWindowSceneSessionRoleExternalDisplay; do
+            BASE=":UIApplicationSceneManifest:UISceneConfigurations:$ROLE"
+            $PB -c "Add $BASE array" "$PLIST"
+            $PB -c "Add $BASE:0 dict" "$PLIST"
+            $PB -c "Add $BASE:0:UISceneConfigurationName string External Display" "$PLIST"
+            $PB -c "Add $BASE:0:UISceneDelegateClassName string ExternalSceneDelegate" "$PLIST"
+          done
+          plutil -p "$PLIST" | grep -A14 UIApplicationSceneManifest || true
+          plutil -p "$PLIST" | grep -E "MinimumOSVersion|CFBundleIdentifier"
+
+      - name: Crea l'IPA
+        run: |
+          APP=$(ls -d build/Build/Products/Release-iphoneos/*.app | head -1)
+          mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qry StreamClient-nextpvr-ios16.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: risultato
+          path: |
+            StreamClient-nextpvr-ios16.ipa
+            build.log
