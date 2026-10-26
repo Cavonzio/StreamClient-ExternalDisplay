@@ -1,0 +1,1061 @@
+diff --git a/NexusPVR/AppEntry.swift b/NexusPVR/AppEntry.swift
+index bbf2426..f0c1e1d 100644
+--- a/NexusPVR/AppEntry.swift
++++ b/NexusPVR/AppEntry.swift
+@@ -124,7 +124,7 @@ struct PVRApp: App {
+                 #endif
+                 #if os(macOS)
+                 .onAppear { applyAppearance(appState.theme) }
+-                .onChange(of: appState.theme) { _, newTheme in applyAppearance(newTheme) }
++                .onChangeCompat(of: appState.theme) { _, newTheme in applyAppearance(newTheme) }
+                 #endif
+                 .onReceive(NotificationCenter.default.publisher(for: .preferencesDidSync)) { _ in
+                     // Picks up a theme changed on another device via iCloud.
+@@ -171,7 +171,7 @@ struct PVRApp: App {
+                 .onOpenURL { url in
+                     handleDeepLink(url)
+                 }
+-                .onChange(of: scenePhase) { _, newPhase in
++                .onChangeCompat(of: scenePhase) { _, newPhase in
+                     #if DISPATCHERPVR
+                     syncPlaybackPositions(for: newPhase)
+                     #endif
+diff --git a/NexusPVR/Compat/ScrollGeometryObserver.swift b/NexusPVR/Compat/ScrollGeometryObserver.swift
+new file mode 100644
+index 0000000..646019b
+--- /dev/null
++++ b/NexusPVR/Compat/ScrollGeometryObserver.swift
+@@ -0,0 +1,100 @@
++//
++//  ScrollGeometryObserver.swift
++//  nextpvr-apple-client
++//
++//  `onScrollGeometryChange` needs iOS 18. This reads the same numbers from the
++//  enclosing UIScrollView, so the guide grid works on iOS 16 and 17.
++//
++
++#if os(iOS)
++
++import SwiftUI
++import UIKit
++
++/// Place it in a `.background` *inside* the scroll content: it walks up to the
++/// enclosing `UIScrollView` and reports `(previous offset, current offset,
++/// visible size)` whenever the offset or the visible size changes.
++struct ScrollGeometryObserver: UIViewRepresentable {
++    let onChange: (CGPoint, CGPoint, CGSize) -> Void
++
++    func makeCoordinator() -> Coordinator {
++        Coordinator()
++    }
++
++    func makeUIView(context: Context) -> UIView {
++        let view = HostView(frame: .zero)
++        view.isUserInteractionEnabled = false
++        view.backgroundColor = .clear
++        context.coordinator.onChange = onChange
++        let coordinator = context.coordinator
++        view.onMovedToWindow = { [weak view, weak coordinator] in
++            guard let view, let coordinator else { return }
++            coordinator.attach(from: view)
++        }
++        return view
++    }
++
++    func updateUIView(_ uiView: UIView, context: Context) {
++        context.coordinator.onChange = onChange
++    }
++
++    final class HostView: UIView {
++        var onMovedToWindow: (() -> Void)?
++
++        override func didMoveToWindow() {
++            super.didMoveToWindow()
++            if window != nil { onMovedToWindow?() }
++        }
++    }
++
++    @MainActor
++    final class Coordinator {
++        var onChange: ((CGPoint, CGPoint, CGSize) -> Void)?
++        private weak var scrollView: UIScrollView?
++        private var offsetObservation: NSKeyValueObservation?
++        private var boundsObservation: NSKeyValueObservation?
++        private var lastOffset: CGPoint = .zero
++        private var lastSize: CGSize = .zero
++
++        func attach(from host: UIView) {
++            guard scrollView == nil else { return }
++            var parent: UIView? = host.superview
++            while let current = parent {
++                if let found = current as? UIScrollView {
++                    observe(found)
++                    return
++                }
++                parent = current.superview
++            }
++        }
++
++        private func observe(_ scrollView: UIScrollView) {
++            self.scrollView = scrollView
++            lastOffset = scrollView.contentOffset
++            offsetObservation = scrollView.observe(\.contentOffset, options: [.new]) { [weak self] _, _ in
++                MainActor.assumeIsolated { self?.report(initial: false) }
++            }
++            boundsObservation = scrollView.observe(\.bounds, options: [.new]) { [weak self] _, _ in
++                MainActor.assumeIsolated { self?.report(initial: false) }
++            }
++            report(initial: true)
++        }
++
++        private func report(initial: Bool) {
++            guard let scrollView else { return }
++            let offset = scrollView.contentOffset
++            let inset = scrollView.adjustedContentInset
++            let size = CGSize(
++                width: scrollView.bounds.width - inset.left - inset.right,
++                height: scrollView.bounds.height - inset.top - inset.bottom
++            )
++            if !initial && offset == lastOffset && size == lastSize { return }
++            let previous = initial ? offset : lastOffset
++            lastOffset = offset
++            lastSize = size
++            onChange?(previous, offset, size)
++        }
++    }
++}
++
++#endif
+diff --git a/NexusPVR/Compat/iOS16Compat.swift b/NexusPVR/Compat/iOS16Compat.swift
+new file mode 100644
+index 0000000..1e0bf26
+--- /dev/null
++++ b/NexusPVR/Compat/iOS16Compat.swift
+@@ -0,0 +1,140 @@
++//
++//  iOS16Compat.swift
++//  nextpvr-apple-client
++//
++//  Stand-ins for SwiftUI APIs that only exist on iOS 17+ (or 16.4+), so the
++//  app can run on iOS 16. Each helper uses the real API where the system has
++//  it and degrades quietly where it doesn't.
++//
++
++import SwiftUI
++
++// MARK: - onChange (the iOS 17 overloads)
++
++private struct OnChangeOldNew<Value: Equatable>: ViewModifier {
++    let value: Value
++    let initial: Bool
++    let action: (Value, Value) -> Void
++    @State private var previous: Value
++
++    init(value: Value, initial: Bool, action: @escaping (Value, Value) -> Void) {
++        self.value = value
++        self.initial = initial
++        self.action = action
++        _previous = State(initialValue: value)
++    }
++
++    func body(content: Content) -> some View {
++        content
++            .onChange(of: value) { newValue in
++                let oldValue = previous
++                previous = newValue
++                action(oldValue, newValue)
++            }
++            .onAppear {
++                if initial { action(value, value) }
++            }
++    }
++}
++
++extension View {
++    /// `onChange(of:initial:_:)` with the old and the new value (iOS 17).
++    func onChangeCompat<Value: Equatable>(
++        of value: Value,
++        initial: Bool = false,
++        _ action: @escaping (_ oldValue: Value, _ newValue: Value) -> Void
++    ) -> some View {
++        modifier(OnChangeOldNew(value: value, initial: initial, action: action))
++    }
++
++    /// `onChange(of:initial:_:)` with no parameters (iOS 17).
++    func onChangeCompat<Value: Equatable>(
++        of value: Value,
++        initial: Bool = false,
++        _ action: @escaping () -> Void
++    ) -> some View {
++        modifier(OnChangeOldNew(value: value, initial: initial) { _, _ in action() })
++    }
++}
++
++// MARK: - Modifiers that arrived after iOS 16.0
++
++extension View {
++    /// `safeAreaPadding(.top, 0)` (iOS 17). Zero padding, so nothing to do before.
++    @ViewBuilder
++    func safeAreaPaddingTopZeroCompat() -> some View {
++        if #available(iOS 17.0, macOS 14.0, tvOS 17.0, *) {
++            safeAreaPadding(.top, 0)
++        } else {
++            self
++        }
++    }
++
++    /// `scrollBounceBehavior(.basedOnSize)` (iOS 16.4).
++    @ViewBuilder
++    func scrollBounceBasedOnSizeCompat() -> some View {
++        if #available(iOS 16.4, macOS 13.3, tvOS 16.4, *) {
++            scrollBounceBehavior(.basedOnSize)
++        } else {
++            self
++        }
++    }
++
++    /// `presentationBackground(_:)` (iOS 16.4).
++    @ViewBuilder
++    func presentationBackgroundCompat<S: ShapeStyle>(_ style: S) -> some View {
++        if #available(iOS 16.4, macOS 13.3, tvOS 16.4, *) {
++            presentationBackground(style)
++        } else {
++            self
++        }
++    }
++
++    /// `presentationCompactAdaptation(.popover)` (iOS 16.4).
++    @ViewBuilder
++    func presentationCompactPopoverCompat() -> some View {
++        if #available(iOS 16.4, macOS 13.3, tvOS 16.4, *) {
++            presentationCompactAdaptation(.popover)
++        } else {
++            self
++        }
++    }
++}
++
++// MARK: - UnevenRoundedRectangle (iOS 17)
++
++struct UnevenRoundedRectangleCompat: Shape {
++    var topLeadingRadius: CGFloat = 0
++    var bottomLeadingRadius: CGFloat = 0
++    var bottomTrailingRadius: CGFloat = 0
++    var topTrailingRadius: CGFloat = 0
++
++    func path(in rect: CGRect) -> Path {
++        let limit = min(rect.width, rect.height) / 2
++        let tl = min(max(topLeadingRadius, 0), limit)
++        let bl = min(max(bottomLeadingRadius, 0), limit)
++        let br = min(max(bottomTrailingRadius, 0), limit)
++        let tr = min(max(topTrailingRadius, 0), limit)
++
++        var path = Path()
++        path.move(to: CGPoint(x: rect.minX + tl, y: rect.minY))
++        path.addLine(to: CGPoint(x: rect.maxX - tr, y: rect.minY))
++        path.addArc(tangent1End: CGPoint(x: rect.maxX, y: rect.minY),
++                    tangent2End: CGPoint(x: rect.maxX, y: rect.minY + tr),
++                    radius: tr)
++        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - br))
++        path.addArc(tangent1End: CGPoint(x: rect.maxX, y: rect.maxY),
++                    tangent2End: CGPoint(x: rect.maxX - br, y: rect.maxY),
++                    radius: br)
++        path.addLine(to: CGPoint(x: rect.minX + bl, y: rect.maxY))
++        path.addArc(tangent1End: CGPoint(x: rect.minX, y: rect.maxY),
++                    tangent2End: CGPoint(x: rect.minX, y: rect.maxY - bl),
++                    radius: bl)
++        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + tl))
++        path.addArc(tangent1End: CGPoint(x: rect.minX, y: rect.minY),
++                    tangent2End: CGPoint(x: rect.minX + tl, y: rect.minY),
++                    radius: tl)
++        path.closeSubpath()
++        return path
++    }
++}
+diff --git a/NexusPVR/Design/Midnight/ProgramDetailPopover.swift b/NexusPVR/Design/Midnight/ProgramDetailPopover.swift
+index ba640a6..2999a34 100644
+--- a/NexusPVR/Design/Midnight/ProgramDetailPopover.swift
++++ b/NexusPVR/Design/Midnight/ProgramDetailPopover.swift
+@@ -33,7 +33,7 @@ extension View {
+         if #available(iOS 26, macOS 26, *) {
+             self
+         } else {
+-            presentationBackground(MidnightPalette.railHead)
++            presentationBackgroundCompat(MidnightPalette.railHead)
+         }
+     }
+ 
+@@ -72,7 +72,7 @@ private struct TapAnchoredPopover<Item: Identifiable, PopoverContent: View>: Vie
+             #if os(macOS)
+             .onAppear { ClickLocationRecorder.start() }
+             #endif
+-            .onChange(of: item?.id) {
++            .onChangeCompat(of: item?.id) {
+                 guard let item else {
+                     presented = nil
+                     return
+@@ -83,10 +83,10 @@ private struct TapAnchoredPopover<Item: Identifiable, PopoverContent: View>: Vie
+             }
+             .popover(item: $presented, attachmentAnchor: .rect(.rect(anchor)), arrowEdge: arrowEdge) { value in
+                 popoverContent(value)
+-                    .presentationCompactAdaptation(.popover)
++                    .presentationCompactPopoverCompat()
+                     .midnightPopoverGround()
+             }
+-            .onChange(of: presented?.id) {
++            .onChangeCompat(of: presented?.id) {
+                 // Dismissed by tapping outside: clear the caller's item too.
+                 if presented == nil, item != nil {
+                     item = nil
+diff --git a/NexusPVR/Features/Channels/ChannelsView.swift b/NexusPVR/Features/Channels/ChannelsView.swift
+index be402b7..abb392a 100644
+--- a/NexusPVR/Features/Channels/ChannelsView.swift
++++ b/NexusPVR/Features/Channels/ChannelsView.swift
+@@ -178,7 +178,7 @@ struct ChannelsView: View {
+                 }
+                 lastKnownFocusedChannelId = focusedChannelId
+             }
+-            .onChange(of: focusedChannelId) { _, _ in
++            .onChangeCompat(of: focusedChannelId) { _, _ in
+                 // Any focus change (dpad move, programmatic reset, leaving the
+                 // grid) invalidates the snapshot, so the move handler only ever
+                 // matches when the press left focus where it was.
+@@ -195,18 +195,18 @@ struct ChannelsView: View {
+                 focusedChannelId = firstVisibleChannelId
+                 await tickCurrentTime()
+             }
+-            .onChange(of: scenePhase) { _, newPhase in
++            .onChangeCompat(of: scenePhase) { _, newPhase in
+                 guard newPhase == .active else { return }
+                 refreshChannelsOnActivation()
+             }
+-            .onChange(of: appState.isShowingPlayer) { _, isShowing in
++            .onChangeCompat(of: appState.isShowingPlayer) { _, isShowing in
+                 // Same as the guide: the full-screen player keeps scenePhase
+                 // active, so catch up on the clock and REC badges on dismissal.
+                 guard !isShowing else { return }
+                 now = Date()
+                 Task { await loadRecordings() }
+             }
+-            .onChange(of: firstVisibleChannelId) { _, id in
++            .onChangeCompat(of: firstVisibleChannelId) { _, id in
+                 guard let focusedChannelId else {
+                     self.focusedChannelId = id
+                     return
+@@ -215,7 +215,7 @@ struct ChannelsView: View {
+                     self.focusedChannelId = id
+                 }
+             }
+-            .onChange(of: appState.tvosChannelsFocusFirstRequest) { _, _ in
++            .onChangeCompat(of: appState.tvosChannelsFocusFirstRequest) { _, _ in
+                 // Entering from the sidebar: land on the first channel card no
+                 // matter where the focus engine put focus. Set immediately
+                 // (covers dpad entry, where content focus is already resolved)
+diff --git a/NexusPVR/Features/Guide/GuideView.swift b/NexusPVR/Features/Guide/GuideView.swift
+index 2c1ed9d..341741a 100644
+--- a/NexusPVR/Features/Guide/GuideView.swift
++++ b/NexusPVR/Features/Guide/GuideView.swift
+@@ -90,7 +90,7 @@ struct GuideView: View {
+                 streamErrorMessage
+             }
+             #if os(macOS)
+-            .onChange(of: appState.showingCalendar) {
++            .onChangeCompat(of: appState.showingCalendar) {
+                 if appState.showingCalendar {
+                     calendarViewModel.epgCache = epgCache
+                     calendarViewModel.client = client
+@@ -122,23 +122,23 @@ struct GuideView: View {
+                     viewModel.selectedProfileId = profileId
+                 }
+             }
+-            .onChange(of: viewModel.channelSearchText) {
++            .onChangeCompat(of: viewModel.channelSearchText) {
+                 Task { viewModel.updateKeywordMatches(keywords: keywords) }
+             }
+-            .onChange(of: epgCache.isFullyLoaded) {
++            .onChangeCompat(of: epgCache.isFullyLoaded) {
+                 Task { viewModel.updateKeywordMatches(keywords: keywords) }
+                 if epgCache.isFullyLoaded {
+                     viewModel.clampSelectedDateToAvailableEPG()
+                 }
+             }
+-            .onChange(of: epgCache.earliestEPGDate) { _, earliestEPGDate in
++            .onChangeCompat(of: epgCache.earliestEPGDate) { _, earliestEPGDate in
+                 guard earliestEPGDate != nil, epgCache.isFullyLoaded else { return }
+                 viewModel.clampSelectedDateToAvailableEPG()
+             }
+-            .onChange(of: appState.guideChannelFilter) {
++            .onChangeCompat(of: appState.guideChannelFilter) {
+                 Task { viewModel.channelSearchText = appState.guideChannelFilter }
+             }
+-            .onChange(of: appState.guideGroupFilter) {
++            .onChangeCompat(of: appState.guideGroupFilter) {
+                 let newGroup = appState.guideGroupFilter
+                 Task {
+                     viewModel.selectedGroupId = newGroup
+@@ -147,10 +147,10 @@ struct GuideView: View {
+                     }
+                 }
+             }
+-            .onChange(of: appState.guideProfileFilter) {
++            .onChangeCompat(of: appState.guideProfileFilter) {
+                 Task { viewModel.selectedProfileId = appState.guideProfileFilter }
+             }
+-            .onChange(of: viewModel.selectedGroupId) { _, groupId in
++            .onChangeCompat(of: viewModel.selectedGroupId) { _, groupId in
+                 if groupId != nil {
+                     viewModel.selectedProfileId = nil
+                     appState.guideProfileFilter = nil
+@@ -158,7 +158,7 @@ struct GuideView: View {
+                 appState.guideGroupFilter = groupId
+             }
+             #if DISPATCHERPVR
+-            .onChange(of: viewModel.selectedProfileId) { _, profileId in
++            .onChangeCompat(of: viewModel.selectedProfileId) { _, profileId in
+                 Task {
+                     await epgCache.reloadData(using: client, profileId: profileId)
+                     viewModel.showChannelSearch = epgCache.channels.count > 25
+@@ -175,10 +175,10 @@ struct GuideView: View {
+ 
+     private func lifecycleHandlers<Content: View>(_ content: Content) -> some View {
+         content
+-            .onChange(of: scenePhase) {
++            .onChangeCompat(of: scenePhase) {
+                 handleScenePhaseChange()
+             }
+-            .onChange(of: appState.isShowingPlayer) { _, isShowing in
++            .onChangeCompat(of: appState.isShowingPlayer) { _, isShowing in
+                 handlePlayerPresentationChange(isShowing: isShowing)
+             }
+     }
+@@ -282,7 +282,7 @@ struct GuideView: View {
+                     rootTopSafeArea = geo.safeAreaInsets.top
+                     #endif
+                 }
+-                .onChange(of: geo.safeAreaInsets.leading) { _, new in
++                .onChangeCompat(of: geo.safeAreaInsets.leading) { _, new in
+                     #if os(iOS)
+                     if UIDevice.current.userInterfaceIdiom != .phone {
+                         rootLeadingSafeArea = new
+@@ -291,7 +291,7 @@ struct GuideView: View {
+                     rootLeadingSafeArea = new
+                     #endif
+                 }
+-                .onChange(of: geo.safeAreaInsets.top) { _, new in
++                .onChangeCompat(of: geo.safeAreaInsets.top) { _, new in
+                     #if os(iOS)
+                     if UIDevice.current.userInterfaceIdiom != .phone {
+                         rootTopSafeArea = new
+@@ -311,15 +311,15 @@ struct GuideView: View {
+         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+             schedulePhoneSafeAreaRefresh()
+         }
+-        .onChange(of: horizontalSizeClass) {
++        .onChangeCompat(of: horizontalSizeClass) {
+             schedulePhoneSafeAreaRefresh()
+         }
+-        .onChange(of: verticalSizeClass) {
++        .onChangeCompat(of: verticalSizeClass) {
+             schedulePhoneSafeAreaRefresh()
+         }
+         #endif
+         #if os(iOS)
+-        .safeAreaPadding(.top, 0)
++        .safeAreaPaddingTopZeroCompat()
+         #endif
+     }
+ 
+@@ -705,6 +705,55 @@ struct GuideView: View {
+     @State private var hasCompletedInitialScroll = false
+     @State private var initialScrollTask: Task<Void, Never>?
+ 
++    #if os(iOS)
++    /// iOS 16 has no `onScrollGeometryChange`: `ScrollGeometryObserver` reports the
++    /// UIScrollView offset and visible size instead.
++    private func handleScrollGeometry(oldOffset: CGPoint, newOffset: CGPoint, container: CGSize) {
++        if container.height != scrollViewHeight || container.width != scrollViewWidth {
++            scrollViewHeight = container.height
++            scrollViewWidth = container.width
++            updateVisibleHourWindow()
++        }
++        if newOffset.x != gridHorizontalOffset {
++            gridHorizontalOffset = newOffset.x
++            updateVisibleHourWindow()
++        }
++        if newOffset.y != oldOffset.y {
++            handleVerticalScroll(old: oldOffset.y, new: newOffset.y)
++        }
++    }
++
++    private func handleVerticalScroll(old: CGFloat, new: CGFloat) {
++            if appState.isUITesting {
++                if appState.isBottomBarHidden {
++                    appState.isBottomBarHidden = false
++                }
++                return
++            }
++
++            let delta = new - old
++            if delta > 5 && !appState.isBottomBarHidden {
++                // Scrolling down — hide immediately
++                withAnimation(.easeInOut(duration: 0.25)) {
++                    appState.isBottomBarHidden = true
++                }
++                lastScrollDirectionChangeY = new
++            } else if delta < -5 && appState.isBottomBarHidden {
++                // Scrolling up — only show after sustained upward scroll
++                let upDistance = lastScrollDirectionChangeY - new
++                if upDistance > 80 {
++                    withAnimation(.easeInOut(duration: 0.25)) {
++                        appState.isBottomBarHidden = false
++                    }
++                }
++            }
++            // Track where direction last changed to down
++            if delta > 5 {
++                lastScrollDirectionChangeY = new
++            }
++    }
++    #endif
++
+     /// Recomputes which hour slots the grid should render, quantized to whole
+     /// hours with one hour of slack on each side (#141).
+     ///
+@@ -899,6 +948,9 @@ struct GuideView: View {
+                 .frame(minHeight: scrollViewHeight, alignment: .top)
+                 #if os(iOS)
+                 .background(ScrollViewDirectionalLock())
++                .background(ScrollGeometryObserver { oldOffset, newOffset, container in
++                    handleScrollGeometry(oldOffset: oldOffset, newOffset: newOffset, container: container)
++                })
+                 #endif
+                 #if os(macOS)
+                 .modifier(MacScrollDirectionalLockModifier())
+@@ -910,6 +962,7 @@ struct GuideView: View {
+             .refreshable {
+                 await refreshGuide()
+             }
++            #if !os(iOS)
+             .onScrollGeometryChange(for: CGSize.self) { geo in
+                 geo.containerSize
+             } action: { _, new in
+@@ -923,48 +976,16 @@ struct GuideView: View {
+                 gridHorizontalOffset = new
+                 updateVisibleHourWindow()
+             }
+-            #if os(iOS)
+-            .onScrollGeometryChange(for: CGFloat.self) { geo in
+-                geo.contentOffset.y
+-            } action: { old, new in
+-                if appState.isUITesting {
+-                    if appState.isBottomBarHidden {
+-                        appState.isBottomBarHidden = false
+-                    }
+-                    return
+-                }
+-
+-                let delta = new - old
+-                if delta > 5 && !appState.isBottomBarHidden {
+-                    // Scrolling down — hide immediately
+-                    withAnimation(.easeInOut(duration: 0.25)) {
+-                        appState.isBottomBarHidden = true
+-                    }
+-                    lastScrollDirectionChangeY = new
+-                } else if delta < -5 && appState.isBottomBarHidden {
+-                    // Scrolling up — only show after sustained upward scroll
+-                    let upDistance = lastScrollDirectionChangeY - new
+-                    if upDistance > 80 {
+-                        withAnimation(.easeInOut(duration: 0.25)) {
+-                            appState.isBottomBarHidden = false
+-                        }
+-                    }
+-                }
+-                // Track where direction last changed to down
+-                if delta > 5 {
+-                    lastScrollDirectionChangeY = new
+-                }
+-            }
+             #endif
+             .onAppear {
+                 startInitialScroll(using: programProxy)
+             }
+-            .onChange(of: viewModel.channels.count) {
++            .onChangeCompat(of: viewModel.channels.count) {
+                 // The first rows can land after the grid appears; a scroll
+                 // requested against an empty grid never sticks (#140).
+                 startInitialScroll(using: programProxy)
+             }
+-            .onChange(of: epgCache.isFullyLoaded) {
++            .onChangeCompat(of: epgCache.isFullyLoaded) {
+                 startInitialScroll(using: programProxy)
+             }
+             .onDisappear {
+@@ -995,10 +1016,10 @@ struct GuideView: View {
+                 appState.clearCatchupGuideReturnTime(ifMatching: catchupReturnTime)
+             }
+             #endif
+-            .onChange(of: viewModel.selectedDate) {
++            .onChangeCompat(of: viewModel.selectedDate) {
+                 updateScrollTarget()
+             }
+-            .onChange(of: scrollTargetId) { _, newValue in
++            .onChangeCompat(of: scrollTargetId) { _, newValue in
+                 #if os(macOS)
+                 if newValue != nil, let time = scrollTargetTime {
+                     Task { await scrollGrid(to: time) }
+@@ -1020,7 +1041,7 @@ struct GuideView: View {
+         .padding(.trailing, islandInsets.right)
+         .ignoresSafeArea(.container, edges: UIDevice.current.userInterfaceIdiom == .phone ? .horizontal : [])
+         #endif
+-        .onChange(of: scenePhase) {
++        .onChangeCompat(of: scenePhase) {
+             if scenePhase == .active
+                 && !preservesGuidePositionAfterCatchup
+                 && appState.catchupGuideReturnTime == nil {
+@@ -1155,7 +1176,7 @@ struct GuideView: View {
+             }
+             .contentShape(Rectangle())
+             .focusable(true)
+-            .onChange(of: focusedRow) { _, newRow in
++            .onChangeCompat(of: focusedRow) { _, newRow in
+                 guard newRow >= 0 else { return }
+                 // Only scroll when focused row would be outside visible area
+                 let maxTopRow = max(0, viewModel.channels.count - visibleRows)
+@@ -1176,7 +1197,7 @@ struct GuideView: View {
+                 handleTVSelect()
+             }
+         }
+-        .onChange(of: viewModel.selectedDate) { oldDate, newDate in
++        .onChangeCompat(of: viewModel.selectedDate) { oldDate, newDate in
+             // Reset grid time window when date changes
+             let calendar = Calendar.current
+             if calendar.isDateInToday(newDate) {
+diff --git a/NexusPVR/Features/Guide/ProgramDetailView.swift b/NexusPVR/Features/Guide/ProgramDetailView.swift
+index debea5f..0dfbe98 100644
+--- a/NexusPVR/Features/Guide/ProgramDetailView.swift
++++ b/NexusPVR/Features/Guide/ProgramDetailView.swift
+@@ -131,7 +131,7 @@ struct ProgramDetailView: View {
+                         }
+                     )
+             }
+-            .scrollBounceBehavior(.basedOnSize)
++            .scrollBounceBasedOnSizeCompat()
+         }
+         .frame(width: width)
+         #if os(iOS)
+diff --git a/NexusPVR/Features/Player/ExternalDisplayManager.swift b/NexusPVR/Features/Player/ExternalDisplayManager.swift
+new file mode 100644
+index 0000000..c2a2792
+--- /dev/null
++++ b/NexusPVR/Features/Player/ExternalDisplayManager.swift
+@@ -0,0 +1,164 @@
++//
++//  ExternalDisplayManager.swift
++//  nextpvr-apple-client
++//
++//  Video on an external display (a TV on HDMI/USB-C, or AirPlay) while the
++//  iPhone/iPad keeps the player controls.
++//
++//  How it works: the app declares an external-display scene (see the
++//  `UIApplicationSceneManifest` injected by the build workflow). When a display
++//  is connected, UIKit creates that scene instead of mirroring, and
++//  `ExternalSceneDelegate` puts a black window on it. While a stream plays with
++//  the pixel-buffer renderer, the shared `AVSampleBufferDisplayLayer` is moved
++//  from the player view into that window; the player view on the device keeps
++//  the controls over a black background.
++//
++//  Without the scene manifest nothing here is triggered and iOS just mirrors
++//  the screen, as before.
++//
++//  Only the pixel-buffer renderer is supported: the Metal and OpenGL renderers
++//  draw into a surface owned by their own view and cannot be shown twice.
++//
++
++#if os(iOS)
++
++import UIKit
++import AVFoundation
++
++extension Notification.Name {
++    /// Posted when an external display scene connects or disconnects.
++    static let externalDisplayChanged = Notification.Name("externalDisplayChanged")
++}
++
++@MainActor
++final class ExternalDisplayManager {
++    static let shared = ExternalDisplayManager()
++
++    private var window: UIWindow?
++    private var hostView: ExternalVideoHostView?
++
++    /// An external display scene is attached.
++    private(set) var isConnected = false
++
++    /// The video layer currently lives on the external display.
++    var isHostingVideo: Bool { hostView?.hasVideo ?? false }
++
++    private init() {}
++
++    func attach(to scene: UIWindowScene) {
++        let window = UIWindow(windowScene: scene)
++        let host = ExternalVideoHostView(frame: window.bounds)
++        let controller = UIViewController()
++        controller.view = host
++        window.rootViewController = controller
++        window.isHidden = false
++        self.window = window
++        hostView = host
++        isConnected = true
++        NotificationCenter.default.post(name: .externalDisplayChanged, object: nil)
++    }
++
++    func detach() {
++        hostView?.removeVideo()
++        hostView = nil
++        window?.isHidden = true
++        window = nil
++        isConnected = false
++        NotificationCenter.default.post(name: .externalDisplayChanged, object: nil)
++    }
++
++    /// Puts the video layer on the external display. Returns `false` when there
++    /// is none, in which case the caller keeps the layer in its own view.
++    func host(layer: AVSampleBufferDisplayLayer, session: any ActivePlayerSessionManaging) -> Bool {
++        guard let hostView else { return false }
++        hostView.show(layer: layer, session: session)
++        return true
++    }
++
++    /// Re-fits the video on the external display (e.g. after an aspect change).
++    func relayout() {
++        hostView?.setNeedsLayout()
++    }
++
++    /// Playback ended: back to the idle screen.
++    func releaseVideo() {
++        hostView?.removeVideo()
++    }
++}
++
++/// Black ground of the external display that holds the video layer.
++@MainActor
++final class ExternalVideoHostView: UIView {
++    private weak var videoLayer: AVSampleBufferDisplayLayer?
++    private weak var session: (any ActivePlayerSessionManaging)?
++    private let idleLabel = UILabel()
++
++    var hasVideo: Bool { videoLayer != nil }
++
++    override init(frame: CGRect) {
++        super.init(frame: frame)
++        backgroundColor = .black
++        autoresizingMask = [.flexibleWidth, .flexibleHeight]
++        idleLabel.text = "StreamClient"
++        idleLabel.textColor = UIColor(white: 1, alpha: 0.35)
++        idleLabel.font = .systemFont(ofSize: 40, weight: .semibold)
++        idleLabel.sizeToFit()
++        addSubview(idleLabel)
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    func show(layer: AVSampleBufferDisplayLayer, session: any ActivePlayerSessionManaging) {
++        self.session = session
++        videoLayer = layer
++        idleLabel.isHidden = true
++        if layer.superlayer !== self.layer {
++            self.layer.addSublayer(layer)
++        }
++        setNeedsLayout()
++    }
++
++    func removeVideo() {
++        videoLayer?.removeFromSuperlayer()
++        videoLayer = nil
++        session = nil
++        idleLabel.isHidden = false
++        setNeedsLayout()
++    }
++
++    override func layoutSubviews() {
++        super.layoutSubviews()
++        idleLabel.center = CGPoint(x: bounds.midX, y: bounds.midY)
++        guard let videoLayer else { return }
++        CATransaction.begin()
++        CATransaction.setDisableActions(true)
++        if let aspect = session?.player?.videoDisplayAspect {
++            videoLayer.videoGravity = .resize
++            videoLayer.frame = VideoAspectCorrection.fittedRect(displayAspect: aspect, in: bounds)
++        } else {
++            videoLayer.videoGravity = .resizeAspect
++            videoLayer.frame = bounds
++        }
++        CATransaction.commit()
++    }
++}
++
++/// Scene delegate for the external display. Referenced by name from the
++/// `UIApplicationSceneManifest` in Info.plist.
++@objc(ExternalSceneDelegate)
++final class ExternalSceneDelegate: UIResponder, UIWindowSceneDelegate {
++    var window: UIWindow?
++
++    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
++        guard let windowScene = scene as? UIWindowScene else { return }
++        ExternalDisplayManager.shared.attach(to: windowScene)
++    }
++
++    func sceneDidDisconnect(_ scene: UIScene) {
++        ExternalDisplayManager.shared.detach()
++    }
++}
++
++#endif
+diff --git a/NexusPVR/Features/Player/MPVContainerView+iOS.swift b/NexusPVR/Features/Player/MPVContainerView+iOS.swift
+index 7c122ae..0ce57d9 100644
+--- a/NexusPVR/Features/Player/MPVContainerView+iOS.swift
++++ b/NexusPVR/Features/Player/MPVContainerView+iOS.swift
+@@ -154,7 +154,11 @@ struct MPVContainerView: UIViewRepresentable {
+     }
+ 
+     func makeUIView(context: Context) -> UIView {
+-        let gpuAPI = UserPreferences.load().iosGPUAPI
++        var gpuAPI = UserPreferences.load().iosGPUAPI
++        // Only the pixel-buffer renderer can be shown on an external display.
++        if ExternalDisplayManager.shared.isConnected {
++            gpuAPI = .pixelbuffer
++        }
+ 
+         if gpuAPI == .pixelbuffer {
+             let view = MPVPlayerPixelBufferView(frame: .zero, session: activePlayerSession, networkEventLogger: networkEventLogger)
+diff --git a/NexusPVR/Features/Player/MPVPlayerPixelBufferView.swift b/NexusPVR/Features/Player/MPVPlayerPixelBufferView.swift
+index 1a9b9cf..d2cdddc 100644
+--- a/NexusPVR/Features/Player/MPVPlayerPixelBufferView.swift
++++ b/NexusPVR/Features/Player/MPVPlayerPixelBufferView.swift
+@@ -60,9 +60,18 @@ class MPVPlayerPixelBufferView: UIView {
+ 
+         let displayLayer = session.displayLayer
+         displayLayer.backgroundColor = UIColor.black.cgColor
+-        layer.addSublayer(displayLayer)
++        attachDisplayLayer()
+         updateDisplayLayerGeometry()
+ 
++        #if os(iOS)
++        NotificationCenter.default.addObserver(
++            self,
++            selector: #selector(externalDisplayChanged),
++            name: .externalDisplayChanged,
++            object: nil
++        )
++        #endif
++
+         #if os(tvOS)
+         for direction: UISwipeGestureRecognizer.Direction in [.left, .right, .up, .down] {
+             let swipe = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipe(_:)))
+@@ -74,12 +83,29 @@ class MPVPlayerPixelBufferView: UIView {
+ 
+     override func layoutSubviews() {
+         super.layoutSubviews()
++        attachDisplayLayer()
++        updateDisplayLayerGeometry()
++    }
++
++    /// The video layer lives on an external display while one is connected
++    /// (see `ExternalDisplayManager`), otherwise in this view.
++    private func attachDisplayLayer() {
++        #if os(iOS)
++        if ExternalDisplayManager.shared.host(layer: session.displayLayer, session: session) {
++            return
++        }
++        #endif
+         if session.displayLayer.superlayer !== layer {
+             layer.addSublayer(session.displayLayer)
+         }
+-        updateDisplayLayerGeometry()
+     }
+ 
++    #if os(iOS)
++    @objc private func externalDisplayChanged() {
++        setNeedsLayout()
++    }
++    #endif
++
+     /// Callable from mpv's threads — the geometry update itself is main-thread only.
+     private nonisolated func updateDisplayLayerGeometryOnMain() {
+         MPVPlayerCore.scheduleOnMain { [weak self] in
+@@ -93,6 +119,12 @@ class MPVPlayerPixelBufferView: UIView {
+     /// aspect and let the frames fill it instead (#152). Falls back to plain
+     /// aspect-fit while the aspect is still unknown.
+     private func updateDisplayLayerGeometry() {
++        #if os(iOS)
++        if ExternalDisplayManager.shared.isHostingVideo {
++            ExternalDisplayManager.shared.relayout()
++            return
++        }
++        #endif
+         let displayLayer = session.displayLayer
+         if let aspect = session.player?.videoDisplayAspect {
+             displayLayer.videoGravity = .resize
+@@ -201,6 +233,9 @@ class MPVPlayerPixelBufferView: UIView {
+             return
+         }
+         session.teardown()
++        #if os(iOS)
++        ExternalDisplayManager.shared.releaseVideo()
++        #endif
+         onPositionUpdate = nil
+         onPlaybackEnded = nil
+         onPlaybackRestarted = nil
+diff --git a/NexusPVR/Features/Recordings/RecordingDetailView.swift b/NexusPVR/Features/Recordings/RecordingDetailView.swift
+index 72df34b..ad30859 100644
+--- a/NexusPVR/Features/Recordings/RecordingDetailView.swift
++++ b/NexusPVR/Features/Recordings/RecordingDetailView.swift
+@@ -92,7 +92,7 @@ struct RecordingDetailView: View {
+                         }
+                     )
+             }
+-            .scrollBounceBehavior(.basedOnSize)
++            .scrollBounceBasedOnSizeCompat()
+         }
+         .frame(width: width)
+         #if os(iOS)
+diff --git a/NexusPVR/Features/Recordings/RecordingsListView.swift b/NexusPVR/Features/Recordings/RecordingsListView.swift
+index e5b8735..9a6789a 100644
+--- a/NexusPVR/Features/Recordings/RecordingsListView.swift
++++ b/NexusPVR/Features/Recordings/RecordingsListView.swift
+@@ -296,12 +296,12 @@ private struct RecordingsListContentView: View {
+                 filterSelection = viewModel.filter
+             }
+         }
+-        .onChange(of: appState.recordingsFilter) {
++        .onChangeCompat(of: appState.recordingsFilter) {
+             if viewModel.filter != appState.recordingsFilter {
+                 Task { viewModel.filter = appState.recordingsFilter }
+             }
+         }
+-        .onChange(of: viewModel.filter) {
++        .onChangeCompat(of: viewModel.filter) {
+             if appState.recordingsFilter != viewModel.filter {
+                 appState.recordingsFilter = viewModel.filter
+             }
+@@ -310,13 +310,13 @@ private struct RecordingsListContentView: View {
+                 filterSelection = viewModel.filter
+             }
+         }
+-        .onChange(of: viewModel.hasActiveRecordings) {
++        .onChangeCompat(of: viewModel.hasActiveRecordings) {
+             syncAppStateFromViewModel()
+         }
+-        .onChange(of: viewModel.completedRecordings) {
++        .onChangeCompat(of: viewModel.completedRecordings) {
+             syncAppStateFromViewModel()
+         }
+-        .onChange(of: viewModel.scheduledRecordings) {
++        .onChangeCompat(of: viewModel.scheduledRecordings) {
+             syncAppStateFromViewModel()
+         }
+         .onReceive(NotificationCenter.default.publisher(for: .recordingsDidChange)) { _ in
+@@ -324,7 +324,7 @@ private struct RecordingsListContentView: View {
+                 await reloadRecordings()
+             }
+         }
+-        .onChange(of: scenePhase) {
++        .onChangeCompat(of: scenePhase) {
+             if scenePhase == .active {
+                 Task { await reloadRecordings() }
+             }
+diff --git a/NexusPVR/Features/Topics/CalendarView.swift b/NexusPVR/Features/Topics/CalendarView.swift
+index 043229a..e449f92 100644
+--- a/NexusPVR/Features/Topics/CalendarView.swift
++++ b/NexusPVR/Features/Topics/CalendarView.swift
+@@ -400,7 +400,7 @@ struct CalendarView: View {
+                     proxy.scrollTo(scrollTarget, anchor: .top)
+                 }
+             }
+-            .onChange(of: selectedDate) { _, _ in
++            .onChangeCompat(of: selectedDate) { _, _ in
+                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                     proxy.scrollTo(scrollTarget, anchor: .top)
+                 }
+@@ -500,7 +500,7 @@ struct CalendarView: View {
+                         proxy.scrollTo(scrollTarget, anchor: .top)
+                     }
+                 }
+-                .onChange(of: selectedDate) { _, _ in
++                .onChangeCompat(of: selectedDate) { _, _ in
+                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                         proxy.scrollTo(scrollTarget, anchor: .top)
+                     }
+diff --git a/NexusPVR/Features/VOD/VODView.swift b/NexusPVR/Features/VOD/VODView.swift
+index 601ff6b..b967bed 100644
+--- a/NexusPVR/Features/VOD/VODView.swift
++++ b/NexusPVR/Features/VOD/VODView.swift
+@@ -88,7 +88,7 @@ private struct VODContentView: View {
+             progress = VODProgressStore.load()
+         }
+         #if os(tvOS)
+-        .onChange(of: selectedItem) { oldItem, newItem in
++        .onChangeCompat(of: selectedItem) { oldItem, newItem in
+             if let newItem {
+                 lastOpenedItemID = newItem.id
+             } else if oldItem != nil {
+@@ -316,7 +316,7 @@ private struct VODContentView: View {
+         .onAppear {
+             if focusedItemID == nil { focusPoster(lastOpenedItemID) }
+         }
+-        .onChange(of: viewModel.items.map(\.id)) { _, ids in
++        .onChangeCompat(of: viewModel.items.map(\.id)) { _, ids in
+             if !ids.contains(focusedItemID ?? "") { focusPoster(nil) }
+         }
+         #endif
+diff --git a/NexusPVR/Navigation/NavigationRouter.swift b/NexusPVR/Navigation/NavigationRouter.swift
+index dfa087a..1dd1260 100644
+--- a/NexusPVR/Navigation/NavigationRouter.swift
++++ b/NexusPVR/Navigation/NavigationRouter.swift
+@@ -345,7 +345,7 @@ struct IOSNavigation: View {
+             }
+         }
+         .onAppear { sidebarSafeArea = Self.windowSafeArea }
+-        .onChange(of: isSidebarOpen) { sidebarSafeArea = Self.windowSafeArea }
++        .onChangeCompat(of: isSidebarOpen) { sidebarSafeArea = Self.windowSafeArea }
+         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+             // The notification arrives before the interface has turned.
+             Task {
+@@ -359,7 +359,7 @@ struct IOSNavigation: View {
+                     .frame(width: sidebarWidth)
+                     .background(Theme.surface)
+                     .clipShape(
+-                        UnevenRoundedRectangle(
++                        UnevenRoundedRectangleCompat(
+                             topLeadingRadius: 0,
+                             bottomLeadingRadius: 0,
+                             bottomTrailingRadius: Theme.cornerRadiusLG,
+@@ -448,7 +448,7 @@ struct IOSNavigation: View {
+                 }
+             }
+         }
+-        .onChange(of: appState.selectedTab) {
++        .onChangeCompat(of: appState.selectedTab) {
+             withAnimation(.easeInOut(duration: 0.2)) {
+                 showSearchDropdown = false
+                 appState.isBottomBarHidden = false
+@@ -1304,7 +1304,7 @@ struct TVOSNavigation: View {
+         .onReceive(NotificationCenter.default.publisher(for: .preferencesDidSync)) { _ in
+             guideSidebarPreferences = UserPreferences.load()
+         }
+-        .onChange(of: focusedItem) { _, newItem in
++        .onChangeCompat(of: focusedItem) { _, newItem in
+             if newItem == nil {
+                 // When sidebar loses focus, disable it so content can receive focus
+                 sidebarEnabled = false
+@@ -1313,7 +1313,7 @@ struct TVOSNavigation: View {
+                 }
+             }
+         }
+-        .onChange(of: appState.selectedTab) { _, newTab in
++        .onChangeCompat(of: appState.selectedTab) { _, newTab in
+             if newTab != .settings {
+                 appState.tvosBlocksSidebarExitCommand = false
+                 appState.tvosSettingsHasPopup = false
