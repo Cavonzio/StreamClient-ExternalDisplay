@@ -272,6 +272,68 @@ index 0000000..1e0bf26
 +        return path
 +    }
 +}
+diff --git a/NexusPVR/Design/Midnight/MidnightActionStrip.swift b/NexusPVR/Design/Midnight/MidnightActionStrip.swift
+index 517841d..e268edb 100644
+--- a/NexusPVR/Design/Midnight/MidnightActionStrip.swift
++++ b/NexusPVR/Design/Midnight/MidnightActionStrip.swift
+@@ -18,19 +18,48 @@ struct MidnightActionStrip<Content: View>: View {
+     private let shape = RoundedRectangle(cornerRadius: Theme.stripRadius, style: .continuous)
+ 
+     var body: some View {
+-        HStack(spacing: 0) {
+-            Group(subviews: content) { cells in
+-                ForEach(Array(cells.enumerated()), id: \.element.id) { index, cell in
+-                    if index > 0 {
+-                        Rectangle().fill(MidnightPalette.lineSoft).frame(width: 1)
++        cells
++            .frame(height: Self.cellSide)
++            .clipShape(shape)
++            .overlay { shape.strokeBorder(MidnightPalette.line, lineWidth: 1) }
++    }
++
++    @ViewBuilder
++    private var cells: some View {
++        if #available(iOS 18.0, *) {
++            HStack(spacing: 0) {
++                Group(subviews: content) { cells in
++                    ForEach(Array(cells.enumerated()), id: \.element.id) { index, cell in
++                        if index > 0 {
++                            Rectangle().fill(MidnightPalette.lineSoft).frame(width: 1)
++                        }
++                        cell.frame(width: Self.cellSide)
+                     }
+-                    cell.frame(width: Self.cellSide)
+                 }
+             }
++        } else {
++            // `Group(subviews:)` is iOS 18; before that, walk the children
++            // with a variadic root.
++            _VariadicView.Tree(MidnightActionStripLayout(cellSide: Self.cellSide)) {
++                content
++            }
++        }
++    }
++}
++
++private struct MidnightActionStripLayout: _VariadicView_MultiViewRoot {
++    let cellSide: CGFloat
++
++    @ViewBuilder
++    func body(children: _VariadicView.Children) -> some View {
++        HStack(spacing: 0) {
++            ForEach(Array(children.enumerated()), id: \.element.id) { index, child in
++                if index > 0 {
++                    Rectangle().fill(MidnightPalette.lineSoft).frame(width: 1)
++                }
++                child.frame(width: cellSide)
++            }
+         }
+-        .frame(height: Self.cellSide)
+-        .clipShape(shape)
+-        .overlay { shape.strokeBorder(MidnightPalette.line, lineWidth: 1) }
+     }
+ }
+ #endif
 diff --git a/NexusPVR/Design/Midnight/ProgramDetailPopover.swift b/NexusPVR/Design/Midnight/ProgramDetailPopover.swift
 index ba640a6..2999a34 100644
 --- a/NexusPVR/Design/Midnight/ProgramDetailPopover.swift
@@ -1011,7 +1073,7 @@ index 601ff6b..b967bed 100644
          }
          #endif
 diff --git a/NexusPVR/Navigation/NavigationRouter.swift b/NexusPVR/Navigation/NavigationRouter.swift
-index dfa087a..1dd1260 100644
+index dfa087a..5d0bb0b 100644
 --- a/NexusPVR/Navigation/NavigationRouter.swift
 +++ b/NexusPVR/Navigation/NavigationRouter.swift
 @@ -345,7 +345,7 @@ struct IOSNavigation: View {
@@ -1041,6 +1103,15 @@ index dfa087a..1dd1260 100644
              withAnimation(.easeInOut(duration: 0.2)) {
                  showSearchDropdown = false
                  appState.isBottomBarHidden = false
+@@ -1104,7 +1104,7 @@ struct IOSNavigation: View {
+                 .foregroundStyle(Theme.textSecondary)
+ 
+             // Brighter than the default prompt, which fades into the glass.
+-            TextField("Search...", text: $searchText, prompt: Text("Search...").foregroundStyle(Theme.textSecondary))
++            TextField("Search...", text: $searchText, prompt: Text("Search...").foregroundColor(Theme.textSecondary))
+                 .font(.archivo(14, .semibold))
+                 .textFieldStyle(.plain)
+                 .accessibilityIdentifier("global-search-field")
 @@ -1304,7 +1304,7 @@ struct TVOSNavigation: View {
          .onReceive(NotificationCenter.default.publisher(for: .preferencesDidSync)) { _ in
              guideSidebarPreferences = UserPreferences.load()
